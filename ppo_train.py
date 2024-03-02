@@ -1,146 +1,74 @@
+# PPO: training
+# Dylan
+# 2024.3.2
+
 import gym
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
 import numpy as np
+import torch
+# import matplotlib.pyplot as plt
+import os
+import time
+from ppo_agent import DDPGAgent
 import random
-from collections import deque
 
-# Define the policy network
-class PolicyNetwork(nn.Module):
-    def __init__(self, state_dim, action_dim):
-        super(PolicyNetwork, self).__init__()
-        self.fc1 = nn.Linear(state_dim, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, action_dim)
+# Initialize environment
+env = gym.make(id='Pendulum-v1')
+STATE_DIM = env.observation_space.shape[0]
+ACTION_DIM = env.action_space.shape[0]
 
-    def forward(self, state):
-        x = F.relu(self.fc1(state))
-        x = F.relu(self.fc2(x))
-        return torch.tanh(self.fc3(x))
+# Hyperparameters
+NUM_EPISODE = 100
+NUM_STEP = 200
 
-# Define a replay buffer using deque
-class ReplayBuffer:
-    def __init__(self, max_size):
-        self.buffer = deque(maxlen=max_size)
+# Initialize agent
+agent = DDPGAgent(STATE_DIM, ACTION_DIM)
 
-    def add(self, experience):
-        self.buffer.append(experience)
+# Training Loop
+REWARD_BUFFER = np.empty(shape=NUM_EPISODE)
+for episode_i in range(NUM_EPISODE):
+    state, others = env.reset()  # state: ndarray, others: dict
+    episode_reward = 0
 
-    def sample(self, batch_size):
-        return random.sample(self.buffer, batch_size)
+    for step_i in range(NUM_STEP):
+        # Select action
+        action = agent.get_action(state)
+        # Execute action at and observe reward rt and observe new state st+1
+        next_state, reward, done, truncation, info = env.step(action)
+        # Store transition (st; at; rt; st+1) in R
+        agent.replay_buffer.add_memo(state, action, reward, next_state, done)
 
-# Define the PPO agent
-class PPOAgent:
-    def __init__(self, state_dim, action_dim, lr=0.001, gamma=0.99, epsilon=0.2):
-        self.policy = PolicyNetwork(state_dim, action_dim)
-        self.optimizer = optim.Adam(self.policy.parameters(), lr=lr)
-        self.gamma = gamma
-        self.epsilon = epsilon
+        state = next_state
+        episode_reward += reward
 
-    def get_action(self, state):
-        state = torch.FloatTensor(state)
-        action_mean = self.policy(state)
-        dist = torch.distributions.Normal(action_mean, 0.2)  # Adjust std.dev. as needed
-        action = dist.sample()
-        return action.item(), dist.log_prob(action)
+        agent.update()
+        if done:
+            break
 
-    def update_policy(self, states, actions, advantages, old_probs):
-        new_probs = torch.exp(-0.5 * ((actions - self.policy(states)) / 0.2) ** 2) / (0.2 * np.sqrt(2 * np.pi))
-        ratio = new_probs / old_probs
+    REWARD_BUFFER[episode_i] = episode_reward
 
-        surrogate1 = ratio * advantages
-        surrogate2 = torch.clamp(ratio, 1 - self.epsilon, 1 + self.epsilon) * advantages
+    print(f"Episode: {episode_i + 1}, Reward: {round(episode_reward, 2)}")
 
-        loss = -torch.min(surrogate1, surrogate2).mean()
+current_path = os.path.dirname(os.path.realpath(__file__))
+model = current_path + '/models/'
+timestamp = time.strftime("%Y%m%d%H%M%S")
 
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
+# Save models
+actor_name = model + f'ddpg_actor_{timestamp}.pth'
+critic_name = model + f'ddpg_critic_{timestamp}.pth'
+torch.save(agent.actor.state_dict(), actor_name)
+torch.save(agent.critic.state_dict(), critic_name)
 
-def compute_advantages(rewards, gamma=0.99, tau=0.95):
-    advantages = []
-    advantage = 0
-
-    for r in reversed(rewards):
-        delta = r + gamma * (1 - tau) * advantage - advantage
-        advantage = advantage + delta
-        advantages.append(advantage)
-
-    advantages = list(reversed(advantages))
-    advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-8)
-    return torch.FloatTensor(advantages)
-
-# Initialize the environment
-env = gym.make('Pendulum-v1')
-state_dim = env.observation_space.shape[0]
-action_dim = env.action_space.shape[0]
-
-# Initialize the PPO agent
-ppo_agent = PPOAgent(state_dim, action_dim)
-# Initialize the replay buffer
-replay_buffer = ReplayBuffer(max_size=10000)
-
-# Training loop
-num_episodes = 1000
-num_steps = 200  # Max number of steps per episode
-num_epochs = 10  # Number of optimization epochs per update
-batch_size = 64  # Batch size for mini-batch learning
-
-for episode in range(num_episodes):
-    states, actions, rewards, old_probs = [], [], [], []
-
-    for step in range(num_steps):
-        state, others = env.reset()
-        done = False
-        total_reward = 0
-
-        action, old_prob = ppo_agent.get_action(state)
-        new_state, reward, done, trunction, _ = env.step([action])
-
-        states.append(state)
-        actions.append(action)
-        rewards.append(reward)
-        old_probs.append(old_prob)
-
-        state = new_state
-
-        if len(states) >= batch_size:
-            # Perform a mini-batch policy update
-            states_tensor = torch.FloatTensor(np.vstack(states))
-            actions_tensor = torch.FloatTensor(actions)
-            rewards_tensor = torch.FloatTensor(rewards)
-            old_probs_tensor = torch.cat(old_probs)
-
-            advantages = compute_advantages(rewards_tensor)
-            ppo_agent.update_policy(states_tensor, actions_tensor, advantages, old_probs_tensor)
-
-            states, actions, rewards, old_probs = [], [], [], []
-
-        # Store the episode in the replay buffer
-        episode_experience = (states, actions, rewards, old_probs)
-        replay_buffer.add(episode_experience)
-
-    # Sample mini-batches from the replay buffer for training
-    for _ in range(num_epochs):
-        mini_batch = replay_buffer.sample(batch_size)
-        mini_states, mini_actions, mini_rewards, mini_old_probs = zip(*mini_batch)
-
-        # Flatten the list of states and actions
-        mini_states = [state for episode_states in mini_states for state in episode_states]
-        mini_actions = [action for episode_actions in mini_actions for action in episode_actions]
-        mini_rewards = [reward for episode_rewards in mini_rewards for reward in episode_rewards]
-
-        mini_states_tensor = torch.FloatTensor(mini_states)
-        mini_actions_tensor = torch.FloatTensor(mini_actions)
-        mini_rewards_tensor = torch.FloatTensor(mini_rewards)
-        mini_old_probs_tensor = torch.FloatTensor(mini_old_probs)
-
-        advantages = compute_advantages(mini_rewards)
-        ppo_agent.update_policy(mini_states_tensor, mini_actions_tensor, advantages, mini_old_probs_tensor)
-
-    print(f"Episode: {episode + 1}")
-
-# Close the environment
+# Close environment
 env.close()
+
+# Save the rewards as txt file
+np.savetxt(current_path + f'/ddpg_reward_{timestamp}.txt', REWARD_BUFFER)
+
+# # Plot rewards using ax.plot()
+# plt.plot(REWARD_BUFFER)
+# plt.xlabel('Episode')
+# plt.ylabel('Reward')
+# plt.title('DDPG Reward')
+# plt.grid()
+# plt.show()
+# plt.savefig(current_path + f'/ddpg_reward_{timestamp}.png')
