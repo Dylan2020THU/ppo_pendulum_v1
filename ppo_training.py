@@ -8,7 +8,7 @@ import torch
 import matplotlib.pyplot as plt
 import os
 import time
-from ppo_agent import DDPGAgent
+from ppo_agent import PPOAgent
 
 # Initialize environment
 scenario = "Pendulum-v1"
@@ -17,11 +17,12 @@ STATE_DIM = env.observation_space.shape[0]
 ACTION_DIM = env.action_space.shape[0]
 
 # Hyperparameters
-NUM_EPISODE = 10
+NUM_EPISODE = 100
 NUM_STEP = 200
+BATCH_SIZE = 10
 
 # Initialize agent
-agent = DDPGAgent(STATE_DIM, ACTION_DIM)
+agent = PPOAgent(STATE_DIM, ACTION_DIM)
 
 # Training Loop
 REWARD_BUFFER = np.empty(shape=NUM_EPISODE)
@@ -31,19 +32,21 @@ for episode_i in range(NUM_EPISODE):
 
     for step_i in range(NUM_STEP):
         # Select action
-        action = agent.get_action(state)
+        action, log_prob, value = agent.get_action(state)
         # Execute action at and observe reward rt and observe new state st+1
         next_state, reward, done, truncation, info = env.step(action)
         # Store transition (st; at; rt; st+1) in R
-        agent.replay_buffer.add_memo(state, action, reward, next_state, done)
+        agent.replay_buffer.add_memo(state, action, reward, log_prob, value, done)
 
+        if step_i < BATCH_SIZE - 1:
+            pass
+        else:
+            agent.update()
+        if done:
+            print(f"Done at step {step_i + 1}")
+            break
         state = next_state
         episode_reward += reward
-
-        agent.update()
-        if done:
-            print("Done at step", step_i + 1)
-            break
 
     REWARD_BUFFER[episode_i] = episode_reward
 
@@ -62,11 +65,8 @@ if not flag:
 actor_name = agent_path + f'ppo_actor_{timestamp}.pth'
 torch.save(agent.actor.state_dict(), actor_name)
 
-# Close environment
-
-
 # Save the rewards as txt file
-np.savetxt(current_path + f'/ddpg_reward_{timestamp}.txt', REWARD_BUFFER)
+np.savetxt(current_path + f'/ppo_reward_{timestamp}.txt', REWARD_BUFFER)
 
 # Plot rewards using ax.plot()
 plt.plot(REWARD_BUFFER, color='purple', label='Episode Reward')
@@ -77,4 +77,3 @@ plt.title(scenario)
 plt.legend()
 plt.savefig(f"reward_{timestamp}.png", format='png')
 plt.show()
-
