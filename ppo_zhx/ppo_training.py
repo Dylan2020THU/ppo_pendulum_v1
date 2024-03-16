@@ -1,6 +1,6 @@
 # PPO: training
 # Dylan
-# 2024.3.4
+# 2024.3.16
 
 import gym
 import numpy as np
@@ -17,12 +17,13 @@ STATE_DIM = env.observation_space.shape[0]
 ACTION_DIM = env.action_space.shape[0]
 
 # Hyperparameters
-NUM_EPISODE = 100
+NUM_EPISODE = 300
 NUM_STEP = 200
-BATCH_SIZE = 10
+BATCH_SIZE = 64
+UPDATE_EPOCH = NUM_STEP
 
 # Initialize agent
-agent = PPOAgent(STATE_DIM, ACTION_DIM)
+agent = PPOAgent(STATE_DIM, ACTION_DIM, BATCH_SIZE)
 
 # Training Loop
 REWARD_BUFFER = np.empty(shape=NUM_EPISODE)
@@ -31,20 +32,13 @@ for episode_i in range(NUM_EPISODE):
     episode_reward = 0
 
     for step_i in range(NUM_STEP):
-        # Select action
+        total_step = episode_i * NUM_STEP + step_i
         action, log_prob, value = agent.get_action(state)
-        # Execute action at and observe reward rt and observe new state st+1
         next_state, reward, done, truncation, info = env.step(action)
-        # Store transition (st; at; rt; st+1) in R
         agent.replay_buffer.add_memo(state, action, reward, log_prob, value, done)
 
-        if step_i < BATCH_SIZE - 1:
-            pass
-        else:
+        if total_step % UPDATE_EPOCH == 0:
             agent.update()
-        if done:
-            print(f"Done at step {step_i + 1}")
-            break
         state = next_state
         episode_reward += reward
 
