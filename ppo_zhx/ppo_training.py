@@ -19,28 +19,39 @@ ACTION_DIM = env.action_space.shape[0]
 # Hyperparameters
 NUM_EPISODE = 300
 NUM_STEP = 200
-BATCH_SIZE = 64
-UPDATE_EPOCH = NUM_STEP
+UPDATE_INTERVAL = 20
 
 # Initialize agent
-agent = PPOAgent(STATE_DIM, ACTION_DIM, BATCH_SIZE)
+agent = PPOAgent(STATE_DIM, ACTION_DIM)
 
 # Training Loop
 REWARD_BUFFER = np.empty(shape=NUM_EPISODE)
+# total_step = 0
 for episode_i in range(NUM_EPISODE):
     state, others = env.reset()  # state: ndarray, others: dict
+    done = False
     episode_reward = 0
 
     for step_i in range(NUM_STEP):
-        total_step = episode_i * NUM_STEP + step_i
+        # while not done:
+        total_step = episode_i * NUM_STEP + step_i + 1
+        # total_step += 1
+        # print(f"total_step: {total_step}")
         action, log_prob, value = agent.get_action(state)
         next_state, reward, done, truncation, info = env.step(action)
+        # print(f"{done} at step {total_step}")
         agent.replay_buffer.add_memo(state, action, reward, log_prob, value, done)
 
-        if total_step % UPDATE_EPOCH == 0:
+        # if step_i == NUM_STEP - 1:
+        #     done = True
+        if total_step % UPDATE_INTERVAL == 0:
             agent.update()
         state = next_state
         episode_reward += reward
+
+        if done:
+            print(f"{done} at step {total_step}.")
+            break
 
     REWARD_BUFFER[episode_i] = episode_reward
 
