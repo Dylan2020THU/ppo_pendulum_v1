@@ -1,12 +1,11 @@
 # PPO: agent
 # Dylan
-# 2024.3.17
+# 2024.3.16
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 from torch.distributions import Normal
 
 # Set device
@@ -20,26 +19,25 @@ class Actor(nn.Module):
         super(Actor, self).__init__()
         self.fc1 = nn.Linear(state_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.mean = nn.Linear(hidden_dim, action_dim)
-        # Change log_std to be action-dependent
-        self.log_std = nn.Linear(hidden_dim, action_dim)
+        self.fc_mean = nn.Linear(hidden_dim, action_dim)
+        self.fc_std = nn.Linear(hidden_dim, action_dim)
+        self.relu = nn.ReLU()
+        self.tanh = nn.Tanh()
+        self.softplus = nn.Softplus()
 
     def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        x = torch.relu(self.fc2(x))
-        mean = self.mean(x)
-        log_std = self.log_std(x)
-        std = log_std.exp()  # Ensure std is positive and allow different std for each action
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        mean = self.tanh(self.fc_mean(x)) * 2
+        std = self.softplus(self.fc_std(x)) + 1e-3
         normal_dist = Normal(mean, std)
 
-        z = normal_dist.rsample()  # For reparameterization trick
-        action = torch.tanh(z)  # Maps to (-1, 1)
-        # print(f"action: {action}")
-        action_log_prob = normal_dist.log_prob(z) - torch.log(1 - action.pow(2) + 1e-6)
-        action_log_prob = action_log_prob.sum(axis=-1, keepdim=True)  # Correction for the tanh squashing
+        action = normal_dist.sample()
+        action = action.clamp(-2.0, 2.0)
+        action_log_prob = normal_dist.log_prob(action)
 
-        low, high = -2, 2
-        action = low + 0.5 * (action + 1.0) * (high - low)  # Scale and shift to [-2,2]
+        # low, high = -2, 2
+        # action = low + 0.5 * (action + 1.0) * (high - low)  # Scale and shift to [-2,2]
         # action = action.clamp(low, high)  # Ensure action is within bounds
 
         return action, action_log_prob
@@ -108,8 +106,8 @@ class ReplayMemory:
 class PPOAgent:
     def __init__(self, state_dim, action_dim):
 
-        self.LR_ACTOR = 1e-3
-        self.LR_CRITIC = 1e-3
+        self.LR_ACTOR = 1e-4
+        self.LR_CRITIC = 1e-4
         self.GAMMA = 0.99
         self.LAMBDA = 0.95
         self.TAU = 0.005
